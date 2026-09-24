@@ -148,7 +148,15 @@ def test_core_traces(spec_dir, name):
 def test_continuation_traces(spec_dir, name, prefix):
     d = Driver()
     d.run(load_trace("core-streaming.jsonl")[:prefix])
-    d.run(load_trace(name))
+    trace = load_trace(name)
+    # A trace describing another world (approval's lab world) borrows only the session setup.
+    assert d.c.ready is not None
+    d.c.ready["granted"]["action_types"] += [
+        e["msg"]["params"]["type"]
+        for e in trace
+        if e.get("from") == "agent" and e["msg"].get("method") == "action.submit"
+    ]
+    d.run(trace)
     assert d.violations == []
 
 

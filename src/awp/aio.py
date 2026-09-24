@@ -68,6 +68,7 @@ class AsyncClient:
         self._waiters: list[tuple[Callable[[Event], bool], asyncio.Future[Event]]] = []
         self._subscribers: list[asyncio.Queue[Event]] = []
         self._closed = asyncio.Event()
+        self._last_rx = 0.0
 
     # ------------------------------------------------------------ transport
 
@@ -85,7 +86,11 @@ class AsyncClient:
             max_size=None,
         )
         self._closed.clear()
-        self._tasks = [asyncio.create_task(self._read(self._ws))]
+        self._last_rx = asyncio.get_running_loop().time()
+        self._tasks = [
+            asyncio.create_task(self._read(self._ws)),
+            asyncio.create_task(self._watch(self._ws)),
+        ]
         if self.heartbeat:
             self._tasks.append(asyncio.create_task(self._beat()))
         if self.report_interval_s:
@@ -158,6 +163,7 @@ class AsyncClient:
     async def _read(self, ws: WebSocket) -> None:
         try:
             async for raw in ws:
+                self._last_rx = asyncio.get_running_loop().time()
                 try:
                     msg = jsonrpc.decode(raw)
                 except AwpError as err:
@@ -199,6 +205,19 @@ class AsyncClient:
                 last = loop.time()
                 self.conn.ping()
                 await self.flush()
+
+    async def _watch(self, ws: WebSocket) -> None:
+        """Three heartbeat intervals without any message from the world is loss (AWP-SAF-002)."""
+        loop = asyncio.get_running_loop()
+        while not self._closed.is_set():
+            await asyncio.sleep(0.1)
+            if self.conn.ready is None:
+                continue
+            interval = (self.conn.ready.get("heartbeat_interval_ms", 5000)) / 1000
+            if loop.time() - self._last_rx > 3 * interval:
+                log.warning("no message from the world for %.1f s; closing", 3 * interval)
+                await ws.close(code=1001, reason="heartbeat lost")
+                return
 
     def _heartbeat_s(self) -> float:
         """Every heartbeat interval, and at least twice per watchdog period (AWP-SAF-005)."""

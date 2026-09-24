@@ -250,6 +250,13 @@ class ClientConnection:
         """Granted channel name → channel_id."""
         return {name: cid for cid, name in self._channel_names.items()}
 
+    @property
+    def granted_action_types(self) -> list[str]:
+        """Action types this session may submit; empty before a session opens."""
+        if self.ready is None:
+            return []
+        return list(self.ready["granted"]["action_types"])
+
     # ------------------------------------------------------------ requests
 
     def initialize(self) -> int:
@@ -319,6 +326,8 @@ class ClientConnection:
         action_id = action_id or f"a-{uuid.uuid4().hex[:16]}"
         if action_id in self.actions:
             raise ValueError(f"action_id {action_id} already used; use resubmit() to retry")
+        if type not in self.granted_action_types:
+            raise AwpError(ErrorCode.FORBIDDEN, f"{type} is not granted (AWP-AGT-003)")
         now = self.clock_ns()
         content: dict[str, Any] = {"action_id": action_id, "type": type, "params": params}
         if embodiment_id is not None:

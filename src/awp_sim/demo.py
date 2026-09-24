@@ -38,6 +38,10 @@ async def run_demo(url: str, *, token: str | None = None, echo: bool = True) -> 
         )
         say(f"session {ready['session_id']} ({mode}) on {manifest['world']['name']}")
         lockstep = mode == "lockstep"
+        if "move_to_pose" not in conn.granted_action_types:
+            say("  move_to_pose is not granted; nothing to do")
+            await client.close_session()
+            return {}
 
         async def move(target: tuple[float, float, float], **kw: Any) -> str:
             basis = None if lockstep else client.latest["proprio"].frame
