@@ -375,8 +375,9 @@ class ClientConnection:
         if ack and self.ready is not None:
             params["last_status_seq"] = self.last_status_seq
         rid = self.request("ping", params)
-        if self.ready is not None:
-            self._session_pings.add(rid)  # only these are stamped on the session clock
+        if self.ready is not None and "tick" not in self.ready:
+            # Only streaming pongs are stamped on a clock the offset can track (AWP-CLK-008).
+            self._session_pings.add(rid)
         return rid
 
     def report(self) -> Message:

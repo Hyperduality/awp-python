@@ -27,7 +27,7 @@ from .errors import AwpError, ErrorCode, ProtocolError
 from .frames import Frame
 from .lifecycle import ActionState
 
-SPEC_REVISION = "0.1-draft.4"
+SPEC_REVISION = "0.1-draft.5"
 PROTOCOL_VERSION = "0.1"
 
 try:
