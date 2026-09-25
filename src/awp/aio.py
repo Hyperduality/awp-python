@@ -72,6 +72,7 @@ class AsyncClient:
         self._closed = asyncio.Event()
         self._last_rx = 0.0
         self._stream_ws: WebSocket | None = None
+        self._streamed = False  # a stream connection has carried the session's channels
 
     # ------------------------------------------------------------ transport
 
@@ -156,7 +157,9 @@ class AsyncClient:
         self._on_closed()
 
     async def _attach_streams(self) -> None:
-        """Carry frames on the world's first `ws` stream endpoint, if it offers one."""
+        """Carry frames on the world's first `ws` stream endpoint, if it offers one. Until it is
+        established, channels are inline (AWP-TRN-008, AWP-TRN-012)."""
+        self._streamed = False
         if not self.streams:
             return
         endpoint = next(
@@ -179,10 +182,18 @@ class AsyncClient:
                     max_size=None,
                 ) as ws:
                     self._stream_ws = ws
+                    self._streamed = True
                     async for raw in ws:
-                        if isinstance(raw, bytes):
-                            for event in self.conn.receive_frame(raw):
-                                self._dispatch(event)
+                        try:
+                            events = self.conn.receive_frame(raw if isinstance(raw, bytes) else b"")
+                        except AwpError as err:
+                            if err.code == ErrorCode.INTEGER_RANGE:
+                                await self._integer_range()
+                                return
+                            await ws.close(code=1002, reason="AWP_MALFORMED")  # AWP-DAT-010
+                            break
+                        for event in events:
+                            self._dispatch(event)
             except (OSError, ConnectionClosed, InvalidHandshake) as exc:
                 log.info("stream connection lost: %s", exc)
             finally:
@@ -205,8 +216,9 @@ class AsyncClient:
                 try:
                     msg = jsonrpc.decode(raw)
                 except AwpError as err:
-                    if err.code == ErrorCode.INTEGER_RANGE:  # AWP-CTL-009
-                        raise
+                    if err.code == ErrorCode.INTEGER_RANGE:
+                        await self._integer_range()
+                        return
                     log.warning("dropping undecodable message: %s", err)
                     continue
                 events = self.conn.receive(msg)
@@ -222,6 +234,18 @@ class AsyncClient:
             await ws.close(code=1011)
         finally:
             self._on_closed()
+
+    async def _integer_range(self) -> None:
+        """A value beyond 2^53-1 ends the session: `session.close`, then close code 1002
+        (AWP-CTL-009)."""
+        log.warning("the world sent an integer beyond 2^53-1; ending the session")
+        for event in self.conn.abandon():
+            self._dispatch(event)
+        ws = self._ws
+        if ws is not None:
+            with contextlib.suppress(ConnectionClosed):
+                await self.flush()
+                await ws.close(code=1002, reason="AWP_INTEGER_RANGE")
 
     def _dispatch(self, event: Event) -> None:
         if isinstance(event, FrameReceived):
@@ -363,13 +387,24 @@ class AsyncClient:
     async def cancel(self, action_id: str) -> dict[str, Any]:
         return await self.call(self.conn.cancel(action_id))
 
-    async def advance(self, count: int | None = None) -> int:
-        result = await self.call(self.conn.advance(count))
-        return int(result["tick"])
+    async def advance(self, count: int | None = None, timeout: float = 10.0) -> int:
+        """Advance lockstep time. Returns once the result and a frame of its tick on every
+        subscribed per-tick channel are held; on a stream connection the frames may follow the
+        result (AWP-TIM-003)."""
+        tick = int((await self.call(self.conn.advance(count), timeout))["tick"])
+        if not self.conn.holds_tick(tick):
+            await self.wait_for(
+                lambda e: isinstance(e, FrameReceived) and self.conn.holds_tick(tick), timeout
+            )
+        return tick
 
     async def command(self, channel: str, payload: bytes | dict[str, Any]) -> None:
-        """Send a setpoint: on the stream connection when there is one, inline otherwise."""
+        """Send a setpoint: on the stream connection when there is one, inline before any is
+        established. While a lost stream connection is down, raises ConnectionError: its
+        channels are sent in neither direction (AWP-TRN-010)."""
         stream = self._stream_ws
+        if stream is None and self._streamed:
+            raise ConnectionError("the stream connection carrying the channel is down")
         frame = self.conn.command(channel, payload, inline=stream is None)
         if stream is not None:
             await stream.send(frames.encode(frame))

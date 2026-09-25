@@ -69,6 +69,8 @@ def decode(data: bytes) -> Frame:
         raise _malformed("bad magic")
     if version != VERSION:
         raise _malformed(f"unsupported version {version}")
+    if flags & RESYNC and not flags & KEYFRAME:
+        raise _malformed("resync without keyframe")  # AWP-DAT-010
     ext: dict[str, int] = {}
     vendor: list[tuple[int, bytes]] = []
     offset = HEADER.size
@@ -158,6 +160,8 @@ def from_inline(params: dict[str, Any]) -> Frame:
     try:
         payload = base64.b64decode(params["payload_b64"], validate=True)
         flags = int(params["flags"])
+        if flags & RESYNC and not flags & KEYFRAME:
+            raise ValueError("resync without keyframe")  # AWP-DAT-010
         return Frame(
             channel_id=int(params["channel_id"]),
             seq=int(params["seq"]),

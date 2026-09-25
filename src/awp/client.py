@@ -157,6 +157,7 @@ class _ChannelStats:
     last_seq: int | None = None
     last_transit: int | None = None
     binding: str = "inline"
+    tick: int | None = None  # of the newest frame, in lockstep
     jitter_sum: int = 0
     jitter_n: int = 0
     staleness: deque[int] = field(default_factory=lambda: deque(maxlen=_SAMPLES))
@@ -210,6 +211,7 @@ class ClientConnection:
         self._seen_above: set[int] = set()  # processed status_seqs beyond a gap
         self._session_pings: set[int] = set()
         self._channel_names: dict[int, str] = {}
+        self._per_tick: set[int] = set()
         self._channel_stats: dict[int, _ChannelStats] = {}
         self._receipts: deque[tuple[int, int]] = deque(maxlen=512)  # (ts_mono_ns, agent receipt)
         self._decision_latency: deque[int] = deque(maxlen=_SAMPLES)
@@ -267,14 +269,38 @@ class ClientConnection:
         return list(self.ready.get("stream_endpoints", [])) if self.ready else []
 
     def receive_frame(self, data: bytes) -> list[Event]:
-        """A binary frame from a stream connection (AWP-TRN-003)."""
+        """A binary frame from a stream connection (AWP-TRN-003). Raises AwpError for a malformed
+        frame, which the caller drops and answers by closing the stream connection (AWP-DAT-010),
+        and for an out-of-range integer, which ends the session (AWP-CTL-009)."""
         events: list[Event] = []
-        try:
-            frame = frames.decode(data)
-        except AwpError as exc:
-            return [ProtocolViolation(f"stream frame: {exc}")]
-        self._frame(frame, "ws", events)
+        self._frame(frames.decode(data), "ws", events)
         return events
+
+    def abandon(self) -> list[Event]:
+        """End the session on this side after a protocol error, never to resume it: queue
+        `session.close` and forget the session (AWP-CTL-009)."""
+        events: list[Event] = []
+        if self.ready is not None and self.session_state not in (None, "closed"):
+            self.close()
+        self._session_lost(events, "protocol_error")
+        return events
+
+    def delivery(self) -> dict[str, tuple[int, int]]:
+        """Per channel: frames received and frames missing by `seq` since the last report. A gap
+        before a resync frame is not loss (AWP-DAT-001, AWP-DAT-009)."""
+        return {
+            self._channel_names[cid]: (st.frames, st.gaps)
+            for cid, st in self._channel_stats.items()
+            if cid in self._channel_names
+        }
+
+    def holds_tick(self, tick: int) -> bool:
+        """True once every subscribed per-tick channel holds a frame of `tick`: with the
+        `world.tick` result, the advance is complete (AWP-TIM-003)."""
+        return all(
+            (st := self._channel_stats.get(cid)) is not None and st.tick == tick
+            for cid in self._per_tick
+        )
 
     @property
     def granted_action_types(self) -> list[str]:
@@ -418,11 +444,21 @@ class ClientConnection:
     def restore(self, snapshot_token: str) -> int:
         return self.request("world.restore", {"snapshot_token": snapshot_token})
 
-    def respond_approval(self, approval_id: str, decision: str, note: str | None = None) -> int:
-        """For an approver connection: `approve` or `deny` (AWP-APR-002)."""
-        params = {"approval_id": approval_id, "decision": decision}
+    def respond_approval(
+        self,
+        approval_id: str,
+        decision: str,
+        note: str | None = None,
+        *,
+        standing: dict[str, Any] | None = None,
+    ) -> int:
+        """For an approver connection: `approve` or `deny` (AWP-APR-002); an approval may also
+        grant a standing approval, `{scope: {type, predicate}, expires_at_ns}` (AWP-APR-004)."""
+        params: dict[str, Any] = {"approval_id": approval_id, "decision": decision}
         if note is not None:
             params["note"] = note
+        if standing is not None:
+            params["standing"] = standing
         return self.request("safety.approval.respond", params)
 
     def command(
@@ -475,7 +511,7 @@ class ClientConnection:
                 entry["staleness_ns"] = staleness
             channels[str(cid)] = entry
             self._channel_stats[cid] = _ChannelStats(
-                last_seq=st.last_seq, last_transit=st.last_transit
+                last_seq=st.last_seq, last_transit=st.last_transit, binding=st.binding, tick=st.tick
             )
         params: dict[str, Any] = {
             "window_ms": max(1, (now - since) // 1_000_000),
@@ -550,6 +586,8 @@ class ClientConnection:
                 and "tick" in err.data
             ):
                 self.tick = err.data["tick"]
+            elif method == "session.resume" and err.code == ErrorCode.SESSION_UNKNOWN:
+                self._session_lost(events, "session_unknown")
             events.append(ErrorResponse(msg["id"], method, err, action_id))
             return events
         res = msg["result"]
@@ -609,6 +647,17 @@ class ClientConnection:
         if self._replay_to is not None and self._replay_to <= self.last_status_seq:
             events.append(ReplayCompleted(self._replay_to))
             self._replay_to = None
+
+    def _session_lost(self, events: list[Event], reason: str) -> None:
+        """The session is over: it is closed, and no action or grant of it survives
+        (AWP-SES-008)."""
+        self.ready = None
+        self.tick = None
+        self.session_state = "closed"
+        self.actions.clear()
+        self._set_channels([])
+        self._channel_stats.clear()
+        events.append(SessionStateChanged("closed", reason, replayed=False))
 
     def _result_session_close(
         self, params: dict[str, Any], res: dict[str, Any], events: list[Event]
@@ -737,6 +786,7 @@ class ClientConnection:
 
     def _set_channels(self, grants: list[dict[str, Any]]) -> None:
         self._channel_names = {g["channel_id"]: g["channel"] for g in grants}
+        self._per_tick = {g["channel_id"] for g in grants if g.get("rate_hz") is None}
 
     def _receipt_of(self, ts_mono_ns: int) -> int | None:
         return next((r for ts, r in reversed(self._receipts) if ts == ts_mono_ns), None)
@@ -766,6 +816,8 @@ class ClientConnection:
                 st.gaps += frame.seq - st.last_seq - 1
         st.last_seq = frame.seq
         st.frames += 1
+        if frame.tick is not None:
+            st.tick = frame.tick
         offset = self.clock.offset_ns
         if offset is not None and frame.ts_send_ns is not None:
             received = now + offset
