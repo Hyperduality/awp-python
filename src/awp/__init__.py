@@ -9,6 +9,7 @@ from importlib.metadata import PackageNotFoundError, version
 from .client import (
     ActionRecord,
     ActionUpdated,
+    ApprovalRequested,
     ClientConnection,
     ErrorResponse,
     Event,
@@ -41,6 +42,7 @@ __all__ = [
     "ActionRecord",
     "ActionState",
     "ActionUpdated",
+    "ApprovalRequested",
     "AwpError",
     "ClientConnection",
     "ErrorCode",

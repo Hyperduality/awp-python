@@ -7,6 +7,7 @@ request method returns the JSON-RPC id it used.
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from collections import deque
@@ -95,6 +96,13 @@ class ErrorResponse:
 
 
 @dataclass(frozen=True, slots=True)
+class ApprovalRequested:
+    """For an approver connection: an action awaits its decision (AWP-APR-001)."""
+
+    params: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
 class ProtocolViolation:
     """The world broke the specification. Informational; the connection stays usable."""
 
@@ -113,6 +121,7 @@ Event = (
     | ReplayCompleted
     | Response
     | ErrorResponse
+    | ApprovalRequested
     | ProtocolViolation
 )
 
@@ -205,6 +214,7 @@ class ClientConnection:
         self._receipts: deque[tuple[int, int]] = deque(maxlen=512)  # (ts_mono_ns, agent receipt)
         self._decision_latency: deque[int] = deque(maxlen=_SAMPLES)
         self._last_report_ns: int | None = None
+        self._command_seq: dict[int, int] = {}
 
     # ------------------------------------------------------------ plumbing
 
@@ -385,6 +395,49 @@ class ClientConnection:
         if count is not None:
             params["count"] = count
         return self.request("world.tick", params)
+
+    def update_task(self, task: dict[str, Any]) -> int:
+        """Replace the session's task (AWP-TSK-003); needs capabilities.task."""
+        return self.request("task.update", {"task": task})
+
+    def transfer(self, expires_in_ms: int | None = None) -> int:
+        """Mint a single-use token another session presents to take the embodiment over."""
+        return self.request(
+            "session.transfer", {} if expires_in_ms is None else {"expires_in_ms": expires_in_ms}
+        )
+
+    def reset(self, initial_state: str | None = None, seed: int | None = None) -> int:
+        params = {
+            k: v for k, v in (("initial_state", initial_state), ("seed", seed)) if v is not None
+        }
+        return self.request("world.reset", params)
+
+    def snapshot(self) -> int:
+        return self.request("world.snapshot", {})
+
+    def restore(self, snapshot_token: str) -> int:
+        return self.request("world.restore", {"snapshot_token": snapshot_token})
+
+    def respond_approval(self, approval_id: str, decision: str, note: str | None = None) -> int:
+        """For an approver connection: `approve` or `deny` (AWP-APR-002)."""
+        params = {"approval_id": approval_id, "decision": decision}
+        if note is not None:
+            params["note"] = note
+        return self.request("safety.approval.respond", params)
+
+    def command(
+        self, channel: str, payload: bytes | dict[str, Any], *, inline: bool = True
+    ) -> frames.Frame:
+        """A setpoint on a granted command channel (AWP-CMD-007). Its `ts_mono_ns` is the issue
+        time mapped through the clock offset (AWP-CLK-009). With `inline`, it is queued as a
+        `cmd.frame` notification; otherwise the caller sends it on a stream connection."""
+        cid = self.channels[channel]
+        seq = self._command_seq[cid] = self._command_seq.get(cid, 0) + 1
+        data = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+        frame = frames.Frame(cid, seq, self.clock.to_session(self.clock_ns()), data)
+        if inline:
+            self._out.append(jsonrpc.notification("cmd.frame", frames.to_inline(frame)))
+        return frame
 
     def subscribe(self, channels: Iterable[dict[str, Any] | str]) -> int:
         subs = [c if isinstance(c, dict) else {"channel": c} for c in channels]
@@ -597,6 +650,8 @@ class ClientConnection:
         if "tick" in res:
             self.tick = res["tick"]
 
+    _result_world_restore = _result_world_reset
+
     def _result_obs_subscribe(
         self, params: dict[str, Any], res: dict[str, Any], events: list[Event]
     ) -> None:
@@ -614,6 +669,8 @@ class ClientConnection:
             self._on_frame(params, events)
         elif method == "session.telemetry":
             events.append(Telemetry(params))
+        elif method == "safety.approval_requested":
+            events.append(ApprovalRequested(params))
         elif method == "action.status":
             self._apply_status(params, events)
         elif method == "world.event":

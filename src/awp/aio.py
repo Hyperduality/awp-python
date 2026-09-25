@@ -19,7 +19,7 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed, InvalidHandshake
 from websockets.typing import Subprotocol
 
-from . import jsonrpc
+from . import frames, jsonrpc
 from .client import (
     ActionRecord,
     ActionUpdated,
@@ -71,6 +71,7 @@ class AsyncClient:
         self._subscribers: list[asyncio.Queue[Event]] = []
         self._closed = asyncio.Event()
         self._last_rx = 0.0
+        self._stream_ws: WebSocket | None = None
 
     # ------------------------------------------------------------ transport
 
@@ -177,12 +178,15 @@ class AsyncClient:
                     open_timeout=self.open_timeout_s,
                     max_size=None,
                 ) as ws:
+                    self._stream_ws = ws
                     async for raw in ws:
                         if isinstance(raw, bytes):
                             for event in self.conn.receive_frame(raw):
                                 self._dispatch(event)
             except (OSError, ConnectionClosed, InvalidHandshake) as exc:
                 log.info("stream connection lost: %s", exc)
+            finally:
+                self._stream_ws = None
             await asyncio.sleep(0.5)
 
     def _on_closed(self) -> None:
@@ -362,6 +366,15 @@ class AsyncClient:
     async def advance(self, count: int | None = None) -> int:
         result = await self.call(self.conn.advance(count))
         return int(result["tick"])
+
+    async def command(self, channel: str, payload: bytes | dict[str, Any]) -> None:
+        """Send a setpoint: on the stream connection when there is one, inline otherwise."""
+        stream = self._stream_ws
+        frame = self.conn.command(channel, payload, inline=stream is None)
+        if stream is not None:
+            await stream.send(frames.encode(frame))
+        else:
+            await self.flush()
 
     async def close_session(self, timeout: float = 10.0) -> None:
         await self.call(self.conn.close(), timeout)
