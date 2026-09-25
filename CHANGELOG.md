@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.0a4
+
+Targets specification revision `0.1-draft.9`.
+
+- The reference world moves to its own package, [awp-sim](https://github.com/Hyperduality/awp-sim), and awp-python is the agent SDK alone.
+- `awp-sim demo` becomes `awp-demo` (`awp.demo`). It reads `$AWP_URL` and `$AWP_TOKEN` when its flags are absent.
+- Tests run against a scripted world over WebSockets instead of awp-sim, and CI runs awp-conformance against `awp-demo` in both time models.
+
 ## 0.1.0a3
 
 Targets specification revision `0.1-draft.9`.
