@@ -16,7 +16,7 @@ from typing import Any
 
 from websockets.asyncio.client import ClientConnection as WebSocket
 from websockets.asyncio.client import connect
-from websockets.exceptions import ConnectionClosed
+from websockets.exceptions import ConnectionClosed, InvalidHandshake
 from websockets.typing import Subprotocol
 
 from . import jsonrpc
@@ -54,8 +54,10 @@ class AsyncClient:
         heartbeat: bool = True,
         report_interval_s: float | None = 2.0,
         open_timeout_s: float = 10.0,
+        streams: bool = True,
     ) -> None:
         self.conn = conn
+        self.streams = streams
         self.url = url
         self.token = token
         self.heartbeat = heartbeat
@@ -110,6 +112,7 @@ class AsyncClient:
             live.cancel()
             self._waiters = [(p, f) for p, f in self._waiters if f is not live]
         await self.ping()
+        await self._attach_streams()
         return ready
 
     async def aclose(self) -> None:
@@ -150,6 +153,37 @@ class AsyncClient:
             await self._ws.close()
             self._ws = None
         self._on_closed()
+
+    async def _attach_streams(self) -> None:
+        """Carry frames on the world's first `ws` stream endpoint, if it offers one."""
+        if not self.streams:
+            return
+        endpoint = next(
+            (e for e in self.conn.stream_endpoints if e.get("binding") == "ws" and e.get("url")),
+            None,
+        )
+        if endpoint is not None:
+            self._tasks.append(asyncio.create_task(self._stream(endpoint["url"])))
+
+    async def _stream(self, url: str) -> None:
+        """A stream connection, re-established while the control connection lives (AWP-TRN-010)."""
+        while not self._closed.is_set() and self.conn.session_token is not None:
+            try:
+                async with connect(
+                    url,
+                    subprotocols=[SUBPROTOCOL],
+                    additional_headers={"Authorization": f"Bearer {self.conn.session_token}"},
+                    ping_interval=None,
+                    open_timeout=self.open_timeout_s,
+                    max_size=None,
+                ) as ws:
+                    async for raw in ws:
+                        if isinstance(raw, bytes):
+                            for event in self.conn.receive_frame(raw):
+                                self._dispatch(event)
+            except (OSError, ConnectionClosed, InvalidHandshake) as exc:
+                log.info("stream connection lost: %s", exc)
+            await asyncio.sleep(0.5)
 
     def _on_closed(self) -> None:
         if not self._closed.is_set():
@@ -300,6 +334,7 @@ class AsyncClient:
         ready = await self.call(self.conn.open_session(mode, **kw))
         for _ in range(4):
             await self.ping()
+        await self._attach_streams()
         return ready
 
     async def submit(self, type: str, params: dict[str, Any], **kw: Any) -> ActionRecord:

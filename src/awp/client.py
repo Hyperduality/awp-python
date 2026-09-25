@@ -147,6 +147,7 @@ class _ChannelStats:
     gaps: int = 0
     last_seq: int | None = None
     last_transit: int | None = None
+    binding: str = "inline"
     jitter_sum: int = 0
     jitter_n: int = 0
     staleness: deque[int] = field(default_factory=lambda: deque(maxlen=_SAMPLES))
@@ -249,6 +250,21 @@ class ClientConnection:
     def channels(self) -> dict[str, int]:
         """Granted channel name → channel_id."""
         return {name: cid for cid, name in self._channel_names.items()}
+
+    @property
+    def stream_endpoints(self) -> list[dict[str, Any]]:
+        """Endpoints from session.ready, by world preference; inline is always last."""
+        return list(self.ready.get("stream_endpoints", [])) if self.ready else []
+
+    def receive_frame(self, data: bytes) -> list[Event]:
+        """A binary frame from a stream connection (AWP-TRN-003)."""
+        events: list[Event] = []
+        try:
+            frame = frames.decode(data)
+        except AwpError as exc:
+            return [ProtocolViolation(f"stream frame: {exc}")]
+        self._frame(frame, "ws", events)
+        return events
 
     @property
     def granted_action_types(self) -> list[str]:
@@ -674,12 +690,18 @@ class ClientConnection:
         except AwpError as exc:
             events.append(ProtocolViolation(str(exc)))
             return
+        self._frame(frame, "inline", events)
+
+    def _frame(self, frame: frames.Frame, binding: str, events: list[Event]) -> None:
         now = self.clock_ns()
         name = self._channel_names.get(frame.channel_id)
         if name is None:
             events.append(ProtocolViolation(f"frame on ungranted channel {frame.channel_id}"))
             return
         st = self._channel_stats.setdefault(frame.channel_id, _ChannelStats())
+        if st.last_seq is not None and frame.seq <= st.last_seq and binding != st.binding:
+            return  # overtaken on the connection the channel moved to (AWP-TRN-012)
+        st.binding = binding
         if st.last_seq is not None:
             if frame.seq <= st.last_seq:
                 events.append(ProtocolViolation(f"channel {name}: seq {frame.seq} not increasing"))
