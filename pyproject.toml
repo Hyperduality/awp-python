@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "awp-python"
-version = "0.1.0a3"
-description = "Agent World Protocol client protocol layer and reference world for Python."
+version = "0.1.0a4"
+description = "Agent World Protocol agent SDK for Python."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -30,7 +30,7 @@ Specification = "https://www.agentworldprotocol.com"
 Source = "https://github.com/Hyperduality/awp-python"
 
 [project.scripts]
-awp-sim = "awp_sim.cli:main"
+awp-demo = "awp.demo:main"
 
 [dependency-groups]
 dev = [
@@ -45,7 +45,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/awp", "src/awp_sim"]
+packages = ["src/awp"]
 
 [tool.hatch.build.targets.sdist]
 exclude = ["/spec", "/.github"]
@@ -74,8 +74,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra --strict-markers"
-markers = ["slow: real-time scenarios"]
 
 [tool.coverage.run]
-source = ["awp", "awp_sim"]
+source = ["awp"]
 branch = true

@@ -4,9 +4,9 @@
     "version": "0.1.0a3"
   },
   "specification": "0.1-draft.9",
-  "target": "/Users/archivec/Documents/Code/Hyperduality/awp-conformance/.venv/bin/awp-sim demo --url {url} --token {token}",
+  "target": "awp-demo --url {url} --token {token}",
   "side": "agent",
-  "generated": "2026-09-25T19:40:57Z",
+  "generated": "2026-09-25T21:46:39Z",
   "claim": {
     "status": "conformant",
     "wording": "Core Agent (streaming): AWP-conformant against 0.1-draft.9 (awp-conformance 0.1.0a3)",

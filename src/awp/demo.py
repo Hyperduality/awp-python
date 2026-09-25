@@ -1,4 +1,5 @@
-"""A scripted agent that exercises a running world: moves, a cancel, and an envelope refusal.
+"""`awp-demo`: a scripted agent for the awp-sim reference world's arm: moves, a cancel, and an
+envelope refusal.
 
 It rides out a lost connection: it resumes the session, or opens a new one if the world no longer
 holds it.
@@ -6,16 +7,19 @@ holds it.
 
 from __future__ import annotations
 
+import argparse
+import asyncio
+import os
+import sys
 import time
 from typing import Any
 
-from websockets.exceptions import ConnectionClosed
-
-from awp.aio import AsyncClient
-from awp.client import ActionRecord, ClientConnection
-from awp.errors import AwpError, ErrorCode
+from websockets.exceptions import ConnectionClosed, InvalidHandshake
 
 from . import __version__
+from .aio import AsyncClient
+from .client import ActionRecord, ClientConnection
+from .errors import AwpError, ErrorCode
 
 TARGETS = [(0.3, 0.2, 0.5), (-0.2, 0.1, 0.3), (0.0, -0.3, 0.45), (0.0, 0.0, 0.4)]
 
@@ -36,7 +40,7 @@ def _pct(values: list[float], p: float) -> float:
 async def run_demo(url: str, *, token: str | None = None, echo: bool = True) -> dict[str, float]:
     say = print if echo else (lambda *_: None)
     conn = ClientConnection(
-        {"name": "awp-sim-demo", "version": __version__, "vendor": "hyperduality"},
+        {"name": "awp-python-demo", "version": __version__, "vendor": "hyperduality"},
         ["proprio/json", "text/event+json"],
     )
     admission_ms: list[float] = []
@@ -131,3 +135,23 @@ async def run_demo(url: str, *, token: str | None = None, echo: bool = True) -> 
         f"p95 {metrics['admission_p95_ms']:.2f} ms"
     )
     return metrics
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(
+        prog="awp-demo", description="A scripted agent for the awp-sim reference world."
+    )
+    p.add_argument("--version", action="version", version=f"awp-demo {__version__}")
+    p.add_argument("--url", default=os.environ.get("AWP_URL", "ws://127.0.0.1:8710"))
+    p.add_argument("--token", default=os.environ.get("AWP_TOKEN"))
+    args = p.parse_args(argv)
+    try:
+        asyncio.run(run_demo(args.url, token=args.token))
+    except (OSError, InvalidHandshake, AwpError, TimeoutError) as err:
+        print(f"awp-demo: {err}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
