@@ -48,6 +48,18 @@ async def test_a_session_runs_over_a_websocket():
     assert headers["sec-websocket-protocol"] == "awp"
 
 
+async def test_a_response_after_a_timeout_is_still_processed():
+    world = ScriptedWorld()
+    async with world.serving(), client(world) as c:
+        await opened(c, world)
+        action_id = c.conn.submit("move_to_pose", POSE)
+        with pytest.raises(TimeoutError):
+            await c.call(c.conn.last_id, timeout=0.05)
+        await world.accept(await world.expect("action.submit"))
+        await c.wait_for(lambda e: c.conn.actions[action_id].state == "accepted", 3)
+        assert c.conn.last_status_seq == c.conn.actions[action_id].status_seq
+
+
 async def test_reconnect_resumes_the_session_and_replays_what_was_missed():
     world = ScriptedWorld()
     async with world.serving(), client(world) as c:

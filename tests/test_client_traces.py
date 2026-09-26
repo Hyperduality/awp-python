@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from awp import schema
-from awp.client import ClientConnection, ProtocolViolation
+from awp.client import ClientConnection, ProtocolViolation, ReplayCompleted
 
 from .conftest import load_trace
 
@@ -178,8 +178,6 @@ def test_retry_replays_lost_admission_and_resubmits_idempotently(spec_dir):
 
 
 def test_disconnect_marks_replay_complete(spec_dir):
-    from awp.client import ReplayCompleted
-
     d = Driver()
     d.run(load_trace("core-streaming.jsonl")[:PREFIX_TO_EXECUTING])
     events = d.run(load_trace("disconnect.jsonl"))

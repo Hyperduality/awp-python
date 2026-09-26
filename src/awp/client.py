@@ -1,8 +1,9 @@
 """The agent side of AWP as a sans-IO state machine.
 
 `ClientConnection` never touches a socket or a timer. Callers feed it decoded messages with
-`receive()`, send whatever `outgoing()` returns, and call the request methods to act. Every
-request method returns the JSON-RPC id it used.
+`receive()`, send whatever `outgoing()` returns, and call the request methods to act. Request
+methods return the JSON-RPC id they used, except `submit`, which returns the action_id, and
+`report` and `command`, which return the notification or frame they queue.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ import json
 import time
 import uuid
 from collections import deque
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -150,6 +151,9 @@ class ActionRecord:
         return self.status.get("progress")
 
 
+_SAMPLES = 4096  # latency samples kept between reports
+
+
 @dataclass(slots=True)
 class _ChannelStats:
     frames: int = 0
@@ -163,10 +167,7 @@ class _ChannelStats:
     staleness: deque[int] = field(default_factory=lambda: deque(maxlen=_SAMPLES))
 
 
-_SAMPLES = 4096  # latency samples kept between reports
-
-
-def _stats(values: Iterable[int]) -> dict[str, int] | None:
+def _stats(values: Collection[int]) -> dict[str, int] | None:
     if not values:
         return None
     ordered = sorted(values)
@@ -200,6 +201,7 @@ class ClientConnection:
         self.ready: dict[str, Any] | None = None
         self.session_state: str | None = None
         self.tick: int | None = None
+        self.embodiments: list[str] = []  # bound by the session; empty for an observer
         self.last_status_seq = 0  # every status_seq up to here has been processed (the ack point)
         self.actions: dict[str, ActionRecord] = {}
         self.clock = ClockEstimator()
@@ -209,7 +211,7 @@ class ClientConnection:
         self._pending: dict[int, tuple[str, dict[str, Any]]] = {}
         self._replay_to: int | None = None
         self._seen_above: set[int] = set()  # processed status_seqs beyond a gap
-        self._session_pings: set[int] = set()
+        self._clock_pings: set[int] = set()
         self._channel_names: dict[int, str] = {}
         self._per_tick: set[int] = set()
         self._channel_stats: dict[int, _ChannelStats] = {}
@@ -237,15 +239,10 @@ class ClientConnection:
         self._out.append(jsonrpc.request(rid, method, params))
         return rid
 
-    def forget(self, rid: int) -> None:
-        """Stop waiting for the response to `rid` (e.g. after a timeout)."""
-        self._pending.pop(rid, None)
-        self._session_pings.discard(rid)
-
     def connection_lost(self) -> None:
         """The transport closed. Unanswered requests will never be answered on this connection."""
         self._pending.clear()
-        self._session_pings.clear()
+        self._clock_pings.clear()
         if self.session_state not in (None, "closed"):
             self.session_state = "suspended"
 
@@ -253,6 +250,22 @@ class ClientConnection:
     def replaying(self) -> bool:
         """True between a session.resume result and the end of its replay."""
         return self._replay_to is not None
+
+    @property
+    def lockstep(self) -> bool:
+        return self.ready is not None and "tick" in self.ready
+
+    @property
+    def heartbeat_s(self) -> float:
+        """How often to ping: every heartbeat interval, and in streaming at least twice per
+        watchdog period (AWP-SAF-005)."""
+        if self.ready is None:
+            raise ProtocolError("no session")
+        interval = self.ready["heartbeat_interval_ms"]
+        safe_state = ((self.manifest or {}).get("safety_policy") or {}).get("safe_state")
+        if safe_state and not self.lockstep:
+            interval = min(interval, safe_state["watchdog_ms"] / 2)
+        return float(interval) / 1000
 
     @property
     def session_token(self) -> str | None:
@@ -326,17 +339,24 @@ class ClientConnection:
         mode: str,
         *,
         embodiment: str | None = None,
+        embodiments: Iterable[str] | None = None,
         subscribe: Iterable[dict[str, Any] | str] = (),
         action_types: Iterable[str] | None = None,
         admin: Iterable[str] | None = None,
         **extra: Any,
     ) -> int:
+        """Open a session bound to `embodiment`, to several `embodiments` of one multi_bind_group
+        (AWP-EMB-005), or, with neither, an observer session."""
         if self.manifest is None:
             raise ProtocolError("initialize first")
+        if embodiment is not None and embodiments is not None:
+            raise ValueError("pass embodiment or embodiments, not both")
         params: dict[str, Any] = {"mode": mode, **extra}
         if embodiment is not None:
             params["embodiment"] = embodiment
-        subs = [s if isinstance(s, dict) else {"channel": s} for s in subscribe]
+        if embodiments is not None:
+            params["embodiments"] = list(embodiments)
+        subs = _subscriptions(subscribe)
         if subs:
             params["subscribe"] = subs
         if action_types is not None:
@@ -380,6 +400,10 @@ class ClientConnection:
             raise ValueError(f"action_id {action_id} already used; use resubmit() to retry")
         if type not in self.granted_action_types:
             raise AwpError(ErrorCode.FORBIDDEN, f"{type} is not granted (AWP-AGT-003)")
+        if embodiment_id is None and len(self.embodiments) > 1:
+            raise AwpError(
+                ErrorCode.INVALID_PARAMS, "a multi-bind session names embodiment_id (AWP-EMB-005)"
+            )
         now = self.clock_ns()
         content: dict[str, Any] = {"action_id": action_id, "type": type, "params": params}
         if embodiment_id is not None:
@@ -414,9 +438,13 @@ class ClientConnection:
         return self.request("action.status", {"action_id": action_id})
 
     def advance(self, count: int | None = None) -> int:
-        """world.tick from the tick the agent holds (AWP-TIM-011). Never implicit (AWP-AGT-009)."""
+        """world.tick from the tick the agent holds (AWP-TIM-011). Never implicit (AWP-AGT-009).
+        Under `tick_authority: "barrier"` the result waits for every other bound session to tick
+        (AWP-TIM-012)."""
         if self.tick is None:
             raise ProtocolError("not a lockstep session")
+        if any(method == "world.tick" for method, _ in self._pending.values()):
+            raise ProtocolError("a world.tick is already pending")
         params: dict[str, Any] = {"expected_tick": self.tick}
         if count is not None:
             params["count"] = count
@@ -427,7 +455,8 @@ class ClientConnection:
         return self.request("task.update", {"task": task})
 
     def transfer(self, expires_in_ms: int | None = None) -> int:
-        """Mint a single-use token another session presents to take the embodiment over."""
+        """Mint a single-use token another session presents to take over one of this session's
+        embodiments (AWP-EMB-003)."""
         return self.request(
             "session.transfer", {} if expires_in_ms is None else {"expires_in_ms": expires_in_ms}
         )
@@ -476,8 +505,7 @@ class ClientConnection:
         return frame
 
     def subscribe(self, channels: Iterable[dict[str, Any] | str]) -> int:
-        subs = [c if isinstance(c, dict) else {"channel": c} for c in channels]
-        return self.request("obs.subscribe", {"channels": subs})
+        return self.request("obs.subscribe", {"channels": _subscriptions(channels)})
 
     def unsubscribe(self, channels: Iterable[str]) -> int:
         return self.request("obs.unsubscribe", {"channels": list(channels)})
@@ -489,9 +517,9 @@ class ClientConnection:
         if ack and self.ready is not None:
             params["last_status_seq"] = self.last_status_seq
         rid = self.request("ping", params)
-        if self.ready is not None and "tick" not in self.ready:
+        if self.ready is not None and not self.lockstep:
             # Only streaming pongs are stamped on a clock the offset can track (AWP-CLK-008).
-            self._session_pings.add(rid)
+            self._clock_pings.add(rid)
         return rid
 
     def report(self) -> Message:
@@ -596,8 +624,8 @@ class ClientConnection:
         if not valid and method in ("initialize", "world.manifest"):
             raise ProtocolError("world manifest does not validate (AWP-AGT-002)")
         if method == "ping":
-            if msg["id"] in self._session_pings:
-                self._session_pings.discard(msg["id"])
+            if msg["id"] in self._clock_pings:
+                self._clock_pings.discard(msg["id"])
                 if valid:
                     received = self.clock_ns()
                     s = sample(params["origin_ns"], res["receive_ns"], res["transmit_ns"], received)
@@ -624,11 +652,13 @@ class ClientConnection:
     def _result_session_open(
         self, params: dict[str, Any], res: dict[str, Any], events: list[Event]
     ) -> None:
+        self._end_session()
+        self.actions.clear()
         self.ready = res
         self.clock = ClockEstimator()  # a new session clock
-        self._seen_above.clear()
-        self.last_status_seq = 0
         self.tick = res.get("tick")
+        embodiment = params.get("embodiment")
+        self.embodiments = list(params.get("embodiments", [embodiment] if embodiment else []))
         self._set_channels(res["granted"]["channels"])
         self.session_state = "ready"
         events.append(SessionOpened(res, resumed=False))
@@ -636,7 +666,7 @@ class ClientConnection:
     def _result_session_resume(
         self, params: dict[str, Any], res: dict[str, Any], events: list[Event]
     ) -> None:
-        self.ready = {**res, "session_token": res.get("session_token", self.session_token)}
+        self.ready = res
         if "tick" in res:
             self.tick = res["tick"]
         self._set_channels(res["granted"]["channels"])
@@ -648,21 +678,39 @@ class ClientConnection:
             events.append(ReplayCompleted(self._replay_to))
             self._replay_to = None
 
+    def _end_session(self) -> None:
+        """Drop the per-session state, before a new session or once the world forgets this one."""
+        self.ready = None
+        self.tick = None
+        self.embodiments = []
+        self.last_status_seq = 0
+        self._replay_to = None
+        self._seen_above.clear()
+        self._set_channels([])
+        self._channel_stats.clear()
+        self._command_seq.clear()
+        self._receipts.clear()
+        self._decision_latency.clear()
+        self._last_report_ns = None
+
+    def _closed(self) -> None:
+        """Nothing is left to acknowledge, resume, or stream. What the session reached stays
+        readable until the next one opens."""
+        self.session_state = "closed"
+        self.ready = None
+
     def _session_lost(self, events: list[Event], reason: str) -> None:
         """The session is over: it is closed, and no action or grant of it survives
         (AWP-SES-008)."""
-        self.ready = None
-        self.tick = None
-        self.session_state = "closed"
+        self._end_session()
         self.actions.clear()
-        self._set_channels([])
-        self._channel_stats.clear()
+        self.session_state = "closed"
         events.append(SessionStateChanged("closed", reason, replayed=False))
 
     def _result_session_close(
         self, params: dict[str, Any], res: dict[str, Any], events: list[Event]
     ) -> None:
-        self.session_state = "closed"
+        self._closed()
 
     def _result_action_submit(
         self, params: dict[str, Any], res: dict[str, Any], events: list[Event]
@@ -730,6 +778,8 @@ class ClientConnection:
             events.append(
                 SessionStateChanged(params["state"], params.get("reason"), self._replaying(params))
             )
+            if params["state"] == "closed":
+                self._closed()
         self._finish_replay(events)
         return events
 
@@ -831,3 +881,7 @@ class ClientConnection:
         if self.session_state == "ready":
             self.session_state = "active"
         events.append(FrameReceived(name, frame, now))
+
+
+def _subscriptions(channels: Iterable[dict[str, Any] | str]) -> list[dict[str, Any]]:
+    return [c if isinstance(c, dict) else {"channel": c} for c in channels]

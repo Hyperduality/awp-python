@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
 import pytest
 
+import awp
 from awp import schema
-from awp.errors import AwpError
+from awp.errors import AwpError, ErrorCode
 
 from .conftest import TRACES
 
@@ -31,8 +33,9 @@ def test_lint_applies_sender_constraints():
 
 
 def test_check_raises_malformed():
-    with pytest.raises(AwpError):
+    with pytest.raises(AwpError) as exc:
         schema.check("ping", {})
+    assert exc.value.code == ErrorCode.MALFORMED
 
 
 def test_params_validator_resolves_manifest_defs(spec_dir):
@@ -44,19 +47,19 @@ def test_params_validator_resolves_manifest_defs(spec_dir):
     assert v.errors("gripper_set", {"width_m": 1.0})
 
 
-def test_trace_messages_validate(spec_dir):
+def test_agent_requests_in_the_traces_validate(spec_dir):
     for path in sorted(TRACES.glob("*.jsonl")):
         for line in path.read_text().splitlines():
             entry = json.loads(line)
-            if "msg" in entry and entry["msg"].get("method") == "initialize":
-                assert schema.errors("agent-manifest", entry["msg"]["params"], sender=True) == []
+            msg = entry.get("msg", {})
+            if entry.get("from") != "agent" or "method" not in msg or "id" not in msg:
+                continue
+            name = schema.schema_for(msg["method"], "params")
+            if name is not None:
+                assert schema.errors(name, msg.get("params", {}), sender=True) == [], path.name
 
 
 def test_bundled_spec_matches_the_pinned_revision(spec_dir):
-    import subprocess
-
-    import awp
-
     tag = subprocess.run(
         ["git", "-C", str(spec_dir), "describe", "--tags", "--exact-match"],
         capture_output=True,

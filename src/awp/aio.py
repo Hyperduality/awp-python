@@ -28,6 +28,7 @@ from .client import (
     Event,
     FrameReceived,
     Response,
+    SessionOpened,
     SessionStateChanged,
 )
 from .errors import AwpError, ErrorCode
@@ -40,9 +41,11 @@ SUBPROTOCOL = Subprotocol("awp")
 class AsyncClient:
     """An agent's connection to a world.
 
-    With `heartbeat=True` a timer sends pings. An agent that actuates something should pass
+    A timer sends pings. In a streaming session, an agent that actuates something should pass
     `heartbeat=False` and call `ping()` from its decision loop instead, so that a stalled policy
-    also stops the heartbeat that holds off the world's watchdog (AWP-SAF-005).
+    also stops the heartbeat that holds off the world's watchdog (AWP-SAF-005). A lockstep session
+    has no watchdog, and its `advance()` may wait on other sessions (AWP-TIM-012), so the timer
+    pings there regardless.
     """
 
     def __init__(
@@ -95,8 +98,7 @@ class AsyncClient:
             asyncio.create_task(self._read(self._ws)),
             asyncio.create_task(self._watch(self._ws)),
         ]
-        if self.heartbeat:
-            self._tasks.append(asyncio.create_task(self._beat()))
+        self._tasks.append(asyncio.create_task(self._beat()))
         if self.report_interval_s:
             self._tasks.append(asyncio.create_task(self._report()))
 
@@ -139,9 +141,9 @@ class AsyncClient:
     async def flush(self) -> None:
         """Send everything the connection has queued, in order."""
         async with self._send_lock:
+            if self._ws is None:
+                raise ConnectionError("not connected")
             for msg in self.conn.outgoing():
-                if self._ws is None:
-                    raise ConnectionError("not connected")
                 await self._ws.send(jsonrpc.encode(msg))
 
     async def _drop(self) -> None:
@@ -250,6 +252,8 @@ class AsyncClient:
     def _dispatch(self, event: Event) -> None:
         if isinstance(event, FrameReceived):
             self.latest[event.channel] = event
+        elif isinstance(event, SessionOpened) and not event.resumed:
+            self.latest.clear()
         for q in self._subscribers:
             q.put_nowait(event)
         for item in list(self._waiters):
@@ -263,7 +267,9 @@ class AsyncClient:
         last = loop.time()
         while not self._closed.is_set():
             await asyncio.sleep(0.05)  # re-read the interval: it is only known once a session opens
-            if self.conn.ready is not None and loop.time() - last >= self._heartbeat_s():
+            if self.conn.ready is None or not (self.heartbeat or self.conn.lockstep):
+                continue
+            if loop.time() - last >= self.conn.heartbeat_s:
                 last = loop.time()
                 self.conn.ping()
                 await self.flush()
@@ -275,25 +281,17 @@ class AsyncClient:
             await asyncio.sleep(0.1)
             if self.conn.ready is None:
                 continue
-            interval = (self.conn.ready.get("heartbeat_interval_ms", 5000)) / 1000
+            interval = self.conn.ready["heartbeat_interval_ms"] / 1000
             if loop.time() - self._last_rx > 3 * interval:
                 log.warning("no message from the world for %.1f s; closing", 3 * interval)
                 await ws.close(code=1001, reason="heartbeat lost")
                 return
 
-    def _heartbeat_s(self) -> float:
-        """Every heartbeat interval, and at least twice per watchdog period (AWP-SAF-005)."""
-        interval = (self.conn.ready or {}).get("heartbeat_interval_ms", 5000)
-        safe_state = ((self.conn.manifest or {}).get("safety_policy") or {}).get("safe_state")
-        if safe_state:
-            interval = min(interval, safe_state["watchdog_ms"] / 2)
-        return float(interval) / 1000
-
     async def _report(self) -> None:
         assert self.report_interval_s is not None
         while not self._closed.is_set():
             await asyncio.sleep(self.report_interval_s)
-            streaming = self.conn.tick is None and self.conn.ready is not None
+            streaming = self.conn.ready is not None and not self.conn.lockstep
             if streaming and self.conn.clock.samples:
                 self.conn.report()
                 await self.flush()
@@ -308,24 +306,23 @@ class AsyncClient:
             self._waiters.append((predicate, fut))
         return fut
 
-    async def _await(self, fut: asyncio.Future[Event], timeout: float) -> Event:
+    async def _await(self, fut: asyncio.Future[Event], timeout: float | None) -> Event:
         try:
             return await asyncio.wait_for(fut, timeout)
         finally:
             self._waiters = [(p, f) for p, f in self._waiters if f is not fut]
 
-    async def wait_for(self, predicate: Callable[[Event], bool], timeout: float = 10.0) -> Event:
+    async def wait_for(
+        self, predicate: Callable[[Event], bool], timeout: float | None = 10.0
+    ) -> Event:
         return await self._await(self._waiter(predicate), timeout)
 
-    async def call(self, rid: int, timeout: float = 10.0) -> dict[str, Any]:
-        """Send what is queued and await the response to request `rid`."""
+    async def call(self, rid: int, timeout: float | None = 10.0) -> dict[str, Any]:
+        """Send what is queued and await the response to request `rid`. A timeout stops the
+        waiting, not the request: a late response is still processed."""
         fut = self._waiter(lambda e: isinstance(e, (Response, ErrorResponse)) and e.id == rid)
         await self.flush()
-        try:
-            event = await self._await(fut, timeout)
-        except TimeoutError:
-            self.conn.forget(rid)
-            raise
+        event = await self._await(fut, timeout)
         if isinstance(event, ErrorResponse):
             raise event.error
         assert isinstance(event, Response)
@@ -387,7 +384,7 @@ class AsyncClient:
     async def cancel(self, action_id: str) -> dict[str, Any]:
         return await self.call(self.conn.cancel(action_id))
 
-    async def advance(self, count: int | None = None, timeout: float = 10.0) -> int:
+    async def advance(self, count: int | None = None, timeout: float | None = 10.0) -> int:
         """Advance lockstep time. Returns once the result and a frame of its tick on every
         subscribed per-tick channel are held; on a stream connection the frames may follow the
         result (AWP-TIM-003)."""

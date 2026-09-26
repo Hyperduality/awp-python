@@ -8,16 +8,19 @@ It targets specification revision **`0.1-draft.9`**, pinned as the `spec/` submo
 
 ![AWP: Core Agent, AWP-conformant against 0.1-draft.9](https://img.shields.io/badge/AWP-Core_Agent%2C_conformant_0.1--draft.9-555)
 
-In both time models, the demo agent built on the client is **Core Agent: AWP-conformant against 0.1-draft.9**. [awp-conformance](https://github.com/Hyperduality/awp-conformance) reports no failure and nothing untested, and [`conformance/`](conformance/README.md) holds the reports and the evidence for their manual rows. CI runs the suite against the demo agent on every change.
+In both time models, the demo agent built on the client is **Core Agent: AWP-conformant against 0.1-draft.9**. [awp-conformance](https://github.com/Hyperduality/awp-conformance) reports no failure and nothing untested, and [`conformance/`](conformance/README.md) holds the reports and the evidence for their manual rows.
 
-| Implemented | Not implemented |
-|---|---|
-| Lockstep and streaming sessions; `world.tick` advances that wait for every per-tick channel | Multi-bind (`embodiments`) |
-| Inline and `ws` stream bindings; binary frame codec (every spec vector) | Other stream bindings (`webrtc`, `webtransport`, `shm`, `grpc`) |
-| Action lifecycle checked against the spec's transition table; idempotent resubmission | |
-| Heartbeats, clock synchronization, receiver reports, resumption with replay and acknowledgement | |
-| Canonical schema validation in receiver and sender forms | |
-| Task, approval and standing approvals, transfer, reset, snapshots, and command channels | |
+Implemented:
+
+- lockstep and streaming sessions, with `world.tick` advances that wait for every per-tick channel;
+- multi-bind sessions (`embodiments`);
+- inline and `ws` stream bindings, and the binary frame codec (every spec vector);
+- the action lifecycle, checked against the spec's transition table, and idempotent resubmission;
+- heartbeats, clock synchronization, receiver reports, and resumption with replay and acknowledgement;
+- canonical schema validation in receiver and sender forms;
+- task, approval and standing approvals, transfer, reset, snapshots, and command channels.
+
+Not implemented: stream bindings other than inline and `ws` (`webrtc`, `webtransport`, `shm`, `grpc`).
 
 ## Install
 
@@ -53,9 +56,11 @@ async with AsyncClient(conn, "ws://127.0.0.1:8710") as client:
 Without asyncio, feed `ClientConnection` the decoded messages and send whatever it queues:
 
 ```python
-events = conn.receive(message)  # typed events: ActionUpdated, FrameReceived, ...
+from awp import jsonrpc
+
+events = conn.receive(jsonrpc.decode(text))  # typed events: ActionUpdated, FrameReceived, ...
 for out in conn.outgoing():  # messages to send, in order
-    transport.send(json.dumps(out))
+    transport.send(jsonrpc.encode(out))
 ```
 
 The connection:
@@ -97,12 +102,7 @@ uv run pytest --cov
 uv run python scripts/sync_spec.py --check
 ```
 
-To move to a new draft revision:
-
-1. Check out its tag in `spec/`.
-2. Run `scripts/sync_spec.py`.
-3. Update `SPEC_REVISION` in `src/awp/__init__.py`.
-4. Fix whatever the tests report.
+[AGENTS.md](AGENTS.md) covers moving to a new draft revision and releasing.
 
 ## License
 
