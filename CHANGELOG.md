@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0a6
+
+Targets specification revision `0.1-draft.10`.
+
+- When one of a multi-bind session's embodiments is transferred away, the client stops counting it as bound (AWP-EMB-003).
+
 ## 0.1.0a5
 
 Targets specification revision `0.1-draft.9`.
