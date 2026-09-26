@@ -2,8 +2,8 @@
 
 `ScriptedWorld` serves over real WebSockets. By default it answers `initialize`, `session.open`,
 `session.resume`, `ping`, `world.tick`, and `session.close` from the awp-sim manifests in
-`conformance/`; everything else, and any of those, a test answers itself. What it sends validates
-against the sender form of its schema.
+`conformance/`. A test answers every other request itself, and can take over any of those. What it
+sends validates against the sender form of its schema.
 """
 
 from __future__ import annotations

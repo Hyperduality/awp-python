@@ -11,7 +11,7 @@ from functools import cache
 from importlib.resources import files
 from typing import Any
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, ValidationError
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
@@ -117,11 +117,12 @@ def validator(name: str, *, sender: bool = False) -> Draft202012Validator:
     return Draft202012Validator({"$ref": ref}, registry=_registry(sender))
 
 
+def _describe(e: ValidationError) -> str:
+    return f"{'/'.join(map(str, e.absolute_path)) or '<root>'}: {e.message}"
+
+
 def errors(name: str, instance: Any, *, sender: bool = False) -> list[str]:
-    return [
-        f"{'/'.join(map(str, e.absolute_path)) or '<root>'}: {e.message}"
-        for e in validator(name, sender=sender).iter_errors(instance)
-    ]
+    return [_describe(e) for e in validator(name, sender=sender).iter_errors(instance)]
 
 
 def check(name: str, instance: Any, *, sender: bool = False) -> None:
@@ -152,7 +153,4 @@ class ParamsValidator:
             self._validators[decl["type"]] = Draft202012Validator({"$ref": ref}, registry=registry)
 
     def errors(self, action_type: str, params: Any) -> list[str]:
-        return [
-            f"{'/'.join(map(str, e.absolute_path)) or '<root>'}: {e.message}"
-            for e in self._validators[action_type].iter_errors(params)
-        ]
+        return [_describe(e) for e in self._validators[action_type].iter_errors(params)]
