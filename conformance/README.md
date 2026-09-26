@@ -4,10 +4,10 @@
 
 | Class | Configuration | Claim | Report |
 |---|---|---|---|
-| Core Agent | `awp-demo`, [`manifest-lockstep.json`](manifest-lockstep.json) | Core Agent (lockstep): AWP-conformant against 0.1-draft.9 (awp-conformance 0.1.0a5) | [`core-agent-lockstep.json`](core-agent-lockstep.json) |
-| Core Agent | `awp-demo`, [`manifest-streaming.json`](manifest-streaming.json) | Core Agent (streaming): AWP-conformant against 0.1-draft.9 (awp-conformance 0.1.0a5) | [`core-agent-streaming.json`](core-agent-streaming.json) |
+| Core Agent | `awp-demo`, [`manifest-lockstep.json`](manifest-lockstep.json) | Core Agent (lockstep): AWP-conformant against 0.1-draft.9 (awp-conformance 0.1.0a6) | [`core-agent-lockstep.json`](core-agent-lockstep.json) |
+| Core Agent | `awp-demo`, [`manifest-streaming.json`](manifest-streaming.json) | Core Agent (streaming): AWP-conformant against 0.1-draft.9 (awp-conformance 0.1.0a6) | [`core-agent-streaming.json`](core-agent-streaming.json) |
 
-The reports come from awp-conformance 0.1.0a5 run against awp-python 0.1.0a4. Neither has a failure or anything untested. The evidence for their `manual` rows is below (AWP-CNF-005).
+The reports come from awp-conformance 0.1.0a6 run against awp-python 0.1.0a5. Neither has a failure or anything untested. The evidence for their `manual` rows is below (AWP-CNF-005).
 
 ## Reproduce
 
@@ -19,7 +19,7 @@ awp-conformance agent --manifest conformance/manifest-lockstep.json --frames con
   --mode lockstep --out report/ -- awp-demo --url '{url}' --token '{token}'
 ```
 
-For streaming, use `manifest-streaming.json` with `--mode streaming`. CI runs both on every change. The tests cited below run in CI too:
+For streaming, use `manifest-streaming.json` with `--mode streaming`. The tests the evidence below cites:
 
 ```bash
 uv run pytest tests/test_frames.py tests/test_evidence.py
@@ -41,7 +41,7 @@ In streaming, the suite reads the agent's loss accounting from its `obs.report`.
 `test_vectors` (`tests/test_frames.py`) runs `awp.frames` over every vector in `schemas/test-vectors/frames.json` of the `spec/` submodule, which is pinned at `spec-v0.1-draft.9`:
 
 - the 10 valid vectors decode to their listed fields;
-- the 7 marked `expect_error` are rejected with their listed error.
+- the 10 marked `expect_error` are rejected with their listed error.
 
 `test_roundtrip_without_vendor` re-encodes the 8 valid vectors that have no unknown extension or reserved bits, and each matches byte for byte.
 
