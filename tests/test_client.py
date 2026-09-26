@@ -85,3 +85,16 @@ def test_the_clock_maps_both_ways_through_the_best_sample():
     clock.add(sample(100, 1_050, 1_050, 150))  # rtt 50: the one to trust
     assert (clock.offset_ns, clock.error_bound_ns) == (925, 25)
     assert clock.to_agent(clock.to_session(7_000)) == 7_000
+
+
+def test_a_transferred_embodiment_is_no_longer_bound():
+    conn = ClientConnection(AGENT, MODALITIES, clock_ns=lambda: 0)
+    conn.receive(jsonrpc.result(conn.initialize(), manifest("streaming")))
+    rid = conn.open_session("streaming", embodiments=["arm_01", "gripper_01"])
+    conn.receive(jsonrpc.result(rid, ready("streaming", conn.outgoing()[-1]["params"])))
+    seq = conn.last_status_seq + 1
+    event = {"event": "embodiment_transferred", "status_seq": seq, "ts_mono_ns": 1}
+    event["detail"] = {"embodiment": "arm_01"}
+    conn.receive(jsonrpc.notification("world.event", event))
+    assert conn.embodiments == ["gripper_01"]  # AWP-EMB-003
+    conn.submit("stop", {})  # one embodiment left: embodiment_id may be left out
