@@ -4,10 +4,10 @@
 
 | Class | Configuration | Claim | Report |
 |---|---|---|---|
-| Core Agent | `awp-demo`, [`manifest-lockstep.json`](manifest-lockstep.json) | Core Agent (lockstep): AWP-conformant against 0.1-draft.10 (awp-conformance 0.1.0a6) | [`core-agent-lockstep.json`](core-agent-lockstep.json) |
-| Core Agent | `awp-demo`, [`manifest-streaming.json`](manifest-streaming.json) | Core Agent (streaming): AWP-conformant against 0.1-draft.10 (awp-conformance 0.1.0a6) | [`core-agent-streaming.json`](core-agent-streaming.json) |
+| Core Agent | `awp-demo`, [`manifest-lockstep.json`](manifest-lockstep.json) | Core Agent (lockstep): AWP-conformant against 0.1-draft.10 (awp-conformance 0.1.0a7) | [`core-agent-lockstep.json`](core-agent-lockstep.json) |
+| Core Agent | `awp-demo`, [`manifest-streaming.json`](manifest-streaming.json) | Core Agent (streaming): AWP-conformant against 0.1-draft.10 (awp-conformance 0.1.0a7) | [`core-agent-streaming.json`](core-agent-streaming.json) |
 
-The reports come from awp-conformance 0.1.0a6 run against awp-python 0.1.0a5. Neither has a failure or anything untested. The evidence for their `manual` rows is below (AWP-CNF-005).
+The reports come from awp-conformance 0.1.0a7 run against awp-python 0.1.0a6. Neither has a failure or anything untested. The evidence for their `manual` rows is below (AWP-CNF-005).
 
 ## Reproduce
 
