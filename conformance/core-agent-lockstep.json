@@ -1,15 +1,15 @@
 {
   "suite": {
     "name": "awp-conformance",
-    "version": "0.1.0a4"
+    "version": "0.1.0a5"
   },
   "specification": "0.1-draft.9",
   "target": "awp-demo --url {url} --token {token}",
   "side": "agent",
-  "generated": "2026-09-25T23:34:53Z",
+  "generated": "2026-09-26T14:40:29Z",
   "claim": {
     "status": "conformant",
-    "wording": "Core Agent (lockstep): AWP-conformant against 0.1-draft.9 (awp-conformance 0.1.0a4)",
+    "wording": "Core Agent (lockstep): AWP-conformant against 0.1-draft.9 (awp-conformance 0.1.0a5)",
     "classes": [
       "Core Agent"
     ],
@@ -1206,7 +1206,7 @@
       "id": "AWP-TIM-003",
       "level": "MUST",
       "outcome": "pass",
-      "detail": "6 check(s): lockstep/baseline, lockstep/malformed-frame, lockstep/reconnect, lockstep/restarted-world"
+      "detail": "6 check(s): lockstep/baseline, lockstep/reconnect, lockstep/restarted-world"
     },
     {
       "id": "AWP-TIM-004",
