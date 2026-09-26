@@ -2,13 +2,13 @@
 
 The Python agent SDK for the [Agent World Protocol](https://www.agentworldprotocol.com). `ClientConnection` is the agent side of AWP as a sans-IO state machine, and `awp.aio.AsyncClient` drives it over a WebSocket.
 
-It targets specification revision **`0.1-draft.9`**, pinned as the `spec/` submodule. This is an alpha, so the API will change along with the draft. The reference world, [awp-sim](https://github.com/Hyperduality/awp-sim), is a separate package built on this one.
+It targets specification revision **`0.1-draft.10`**, pinned as the `spec/` submodule. This is an alpha, so the API will change along with the draft. The reference world, [awp-sim](https://github.com/Hyperduality/awp-sim), is a separate package built on this one.
 
 ## Status
 
-![AWP: Core Agent, AWP-conformant against 0.1-draft.9](https://img.shields.io/badge/AWP-Core_Agent%2C_conformant_0.1--draft.9-555)
+![AWP: Core Agent, AWP-conformant against 0.1-draft.10](https://img.shields.io/badge/AWP-Core_Agent%2C_conformant_0.1--draft.10-555)
 
-In both time models, the demo agent built on the client is **Core Agent: AWP-conformant against 0.1-draft.9**. [awp-conformance](https://github.com/Hyperduality/awp-conformance) reports no failure and nothing untested, and [`conformance/`](conformance/README.md) holds the reports and the evidence for their manual rows.
+In both time models, the demo agent built on the client is **Core Agent: AWP-conformant against 0.1-draft.10**. [awp-conformance](https://github.com/Hyperduality/awp-conformance) reports no failure and nothing untested, and [`conformance/`](conformance/README.md) holds the reports and the evidence for their manual rows.
 
 Implemented:
 
@@ -87,7 +87,7 @@ src/awp/            client protocol layer (sans-IO), asyncio adapter, frame code
 src/awp/_spec/      schemas and lifecycle table bundled from spec/ (scripts/sync_spec.py)
 tests/              unit tests, and a scripted world that serves over WebSockets
 conformance/        conformance reports, the manifests they were run against, and evidence
-spec/               agent-world-protocol, pinned at spec-v0.1-draft.9
+spec/               agent-world-protocol, pinned at spec-v0.1-draft.10
 ```
 
 ## Development

@@ -772,6 +772,9 @@ class ClientConnection:
             self._apply_status(params, events)
         elif method == "world.event":
             if self._sequence(params["status_seq"], events):
+                if params["event"] == "embodiment_transferred":
+                    moved = (params.get("detail") or {}).get("embodiment")
+                    self.embodiments = [e for e in self.embodiments if e != moved]  # AWP-EMB-003
                 events.append(WorldEvent(params["event"], params, self._replaying(params)))
         elif method == "session.state" and self._sequence(params["status_seq"], events):
             self.session_state = params["state"]

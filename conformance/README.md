@@ -1,11 +1,11 @@
 # Conformance
 
-![AWP: Core Agent, AWP-conformant against 0.1-draft.9](https://img.shields.io/badge/AWP-Core_Agent%2C_conformant_0.1--draft.9-555)
+![AWP: Core Agent, AWP-conformant against 0.1-draft.10](https://img.shields.io/badge/AWP-Core_Agent%2C_conformant_0.1--draft.10-555)
 
 | Class | Configuration | Claim | Report |
 |---|---|---|---|
-| Core Agent | `awp-demo`, [`manifest-lockstep.json`](manifest-lockstep.json) | Core Agent (lockstep): AWP-conformant against 0.1-draft.9 (awp-conformance 0.1.0a6) | [`core-agent-lockstep.json`](core-agent-lockstep.json) |
-| Core Agent | `awp-demo`, [`manifest-streaming.json`](manifest-streaming.json) | Core Agent (streaming): AWP-conformant against 0.1-draft.9 (awp-conformance 0.1.0a6) | [`core-agent-streaming.json`](core-agent-streaming.json) |
+| Core Agent | `awp-demo`, [`manifest-lockstep.json`](manifest-lockstep.json) | Core Agent (lockstep): AWP-conformant against 0.1-draft.10 (awp-conformance 0.1.0a6) | [`core-agent-lockstep.json`](core-agent-lockstep.json) |
+| Core Agent | `awp-demo`, [`manifest-streaming.json`](manifest-streaming.json) | Core Agent (streaming): AWP-conformant against 0.1-draft.10 (awp-conformance 0.1.0a6) | [`core-agent-streaming.json`](core-agent-streaming.json) |
 
 The reports come from awp-conformance 0.1.0a6 run against awp-python 0.1.0a5. Neither has a failure or anything untested. The evidence for their `manual` rows is below (AWP-CNF-005).
 
@@ -38,7 +38,7 @@ In streaming, the suite reads the agent's loss accounting from its `obs.report`.
 
 ### AWP-DAT-008: frame test vectors
 
-`test_vectors` (`tests/test_frames.py`) runs `awp.frames` over every vector in `schemas/test-vectors/frames.json` of the `spec/` submodule, which is pinned at `spec-v0.1-draft.9`:
+`test_vectors` (`tests/test_frames.py`) runs `awp.frames` over every vector in `schemas/test-vectors/frames.json` of the `spec/` submodule, which is pinned at `spec-v0.1-draft.10`:
 
 - the 10 valid vectors decode to their listed fields;
 - the 10 marked `expect_error` are rejected with their listed error.
@@ -47,7 +47,7 @@ In streaming, the suite reads the agent's loss accounting from its `obs.report`.
 
 ### AWP-VER-009: the draft revision is named
 
-- The [README](../README.md) and the [Python SDK page](https://www.agentworldprotocol.com/sdks/python) name `0.1-draft.9`.
-- `awp.SPEC_REVISION` is `"0.1-draft.9"`.
-- The `spec/` submodule is pinned at the tag `spec-v0.1-draft.9`.
-- Each report records `"specification": "0.1-draft.9"`, and its claim names the revision.
+- The [README](../README.md) and the [Python SDK page](https://www.agentworldprotocol.com/sdks/python) name `0.1-draft.10`.
+- `awp.SPEC_REVISION` is `"0.1-draft.10"`.
+- The `spec/` submodule is pinned at the tag `spec-v0.1-draft.10`.
+- Each report records `"specification": "0.1-draft.10"`, and its claim names the revision.
