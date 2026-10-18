@@ -133,7 +133,7 @@ async def test_setpoints_are_not_sent_inline_while_their_stream_is_down():
     world = ScriptedWorld(stream=True, command=("servo_arm",))
     async with world.serving(), client(world) as c:
         await opened(c, world)
-        await world.until(lambda: world.stream_conn)
+        await world.until(lambda: world.stream_conn and c._stream_ws is not None)
         await c.command("servo_arm", {"v_mps": [0.01, 0.0, 0.0]})
         await world.until(lambda: world.stream_received)
         world.refuse_streams = True
