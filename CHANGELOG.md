@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0a7
+
+Targets specification revision `0.1-draft.11`.
+
+- The bundled schemas add the game profile's `input_chunk` params schema, `profiles/input-chunk.schema.json`. The client is otherwise unchanged.
+
 ## 0.1.0a6
 
 Targets specification revision `0.1-draft.10`.
