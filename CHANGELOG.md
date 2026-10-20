@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0a8
+
+Targets specification revision `0.1-draft.12`.
+
+- Draft 12 changes no wire format, and the bundled schemas are unchanged. The reports come from awp-conformance 0.1.0a10.
+- Synced spec files are written as UTF-8 with LF line endings on every platform.
+
 ## 0.1.0a7
 
 Targets specification revision `0.1-draft.11`.
